@@ -92,7 +92,7 @@
                     "scope": "window",
                     "type": "string",
                     "default": "array",
-                    "description": "Built-in array types. This will handle `Type[]` as `array<Type>`."
+                    "description": "Built-in array type. This will handle `Type[]` as `array<Type>`."
                 },
                 "angelScript.implicitMutualInclusion": {
                     "scope": "window",

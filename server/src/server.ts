@@ -219,7 +219,7 @@ connection.onHover((params) => {
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent(change => {
-    inspectFile(change.document.getText(), change.document.uri);
+    inspectFile(change.document.getText(), change.document.uri, true);
 
     connection.languages.diagnostics.refresh();
 });

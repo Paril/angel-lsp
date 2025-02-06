@@ -62,14 +62,14 @@ export class AnalyzedScope {
     /**
      * The path of the file being analyzed.
      */
-    public readonly path: string;
+    public path: string;
     /**
      * The scope that contains all symbols in the file.
      * It includes symbols from other modules as well.
      */
-    public readonly fullScope: SymbolScope;
+    public fullScope: SymbolScope;
 
-    private pureBuffer: SymbolScope | undefined;
+    public pureBuffer: SymbolScope | undefined;
 
     /**
      * The scope that contains only symbols in the file.

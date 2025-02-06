@@ -13,7 +13,7 @@ import * as url from "url";
 import {URL} from "url";
 import * as path from "node:path";
 import * as fs from "fs";
-import {fileURLToPath} from "node:url";
+import {fileURLToPath, pathToFileURL} from "node:url";
 import {preprocessTokensForParser} from "../compile/parserPreprocess";
 import {getGlobalSettings} from "../code/settings";
 
@@ -62,15 +62,18 @@ export function getInspectedResultList(): InspectResult[] {
 /**
  * Compile the specified file and cache the result.
  */
-export function inspectFile(content: string, targetUri: URI) {
+export function inspectFile(content: string, targetUri: URI, dependencies: boolean) {
     // Load as.predefined file
     const predefinedUri = checkInspectPredefined(targetUri);
 
     // Cache the inspected result
-    s_inspectedResults[targetUri] = inspectInternal(content, targetUri, predefinedUri);
+    inspectInternal(content, targetUri, predefinedUri);
 
-    // Re-analyze the files that includes the current file
-    reanalyzeFilesWithDependency(targetUri);
+	if (dependencies)
+	{
+		// Re-analyze the files that includes the current file
+		reanalyzeFilesWithDependency(targetUri);
+	}
 }
 
 /**
@@ -79,7 +82,7 @@ export function inspectFile(content: string, targetUri: URI) {
  */
 export function reinspectAllFiles() {
     for (const uri of Object.keys(s_inspectedResults)) {
-        inspectFile(s_inspectedResults[uri].content, uri);
+        inspectFile(s_inspectedResults[uri].content, uri, !getGlobalSettings().implicitMutualInclusion);
     }
 }
 
@@ -102,7 +105,7 @@ function checkInspectPredefined(targetUri: URI) {
         if (content === undefined) continue;
 
         // Inspect found as.predefined
-        s_inspectedResults[predefinedUri] = inspectInternal(content, predefinedUri, undefined);
+        inspectInternal(content, predefinedUri, undefined);
 
         // Inspect all files under the directory where as.predefined is located, as we may need to reference them.
         if (predefinedUri !== undefined) {
@@ -116,14 +119,13 @@ function checkInspectPredefined(targetUri: URI) {
 }
 
 function inspectAllFilesUnderDirectory(dirUri: string) {
-    const entries = fs.readdirSync(fileURLToPath(dirUri), {withFileTypes: true});
+    const entries = fs.readdirSync(fileURLToPath(dirUri), {withFileTypes: true, recursive: true});
     for (const entry of entries) {
-        const fileUri = resolveUri(dirUri, entry.name);
-        if (entry.isDirectory()) {
-            inspectAllFilesUnderDirectory(fileUri);
-        } else if (entry.isFile() && fileUri.endsWith('.as')) {
+        let fileUri = pathToFileURL(path.join(entry.path, entry.name)).toString();
+		fileUri = 'file:///' + fileUri.substring(8).replace(':', '%3A');
+        if (entry.isFile() && fileUri.endsWith('.as')) {
             const content = readFileFromUri(fileUri);
-            if (content !== undefined) inspectFile(content, fileUri);
+            if (content !== undefined) inspectFile(content, fileUri, false);
         }
     }
 }
@@ -161,7 +163,7 @@ function splitUriIntoDirectories(fileUri: string): string[] {
     return directories;
 }
 
-function inspectInternal(content: string, targetUri: URI, predefinedUri: URI | undefined): InspectResult {
+function inspectInternal(content: string, targetUri: URI, predefinedUri: URI | undefined): void {
     tracer.message(`🔬 Inspect "${targetUri}"`);
 
     diagnostic.beginSession();
@@ -185,8 +187,8 @@ function inspectInternal(content: string, targetUri: URI, predefinedUri: URI | u
     if (getGlobalSettings().implicitMutualInclusion) {
         // If implicit mutual inclusion is enabled, include all files under the directory where as.predefined is located.
         if (targetUri.endsWith(predefinedFileName) === false && predefinedUri !== undefined) {
-            includePaths = listPathsOfInspectedFilesUnder(resolveUri(predefinedUri, '.'))
-                .filter(uri => uri.endsWith('.as') && uri !== targetUri);
+            includePaths = listPathsOfInspectedFilesUnder(resolveUri(predefinedUri, '.'));
+            includePaths = includePaths.filter(uri => uri.endsWith('.as') && uri !== targetUri);
         }
     }
 
@@ -203,15 +205,31 @@ function inspectInternal(content: string, targetUri: URI, predefinedUri: URI | u
 
     const diagnosticsInAnalyzer = diagnostic.endSession();
 
-    return {
-        content: content,
-        diagnosticsInParser,
-        diagnosticsInAnalyzer,
-        tokenizedTokens: tokenizedTokens,
-        parsedAst: parsedAst,
-        analyzedScope: analyzedScope,
-        includedScopes: includedScopes,
-    };
+	if (!(targetUri in s_inspectedResults))
+	{
+		s_inspectedResults[targetUri] = {
+			content: content,
+			diagnosticsInParser,
+			diagnosticsInAnalyzer,
+			tokenizedTokens: tokenizedTokens,
+			parsedAst: parsedAst,
+			analyzedScope: analyzedScope,
+			includedScopes: includedScopes,
+		};
+
+		return;
+	}
+
+	const result = s_inspectedResults[targetUri];
+	result.content = content;
+	result.diagnosticsInParser = diagnosticsInParser;
+	result.diagnosticsInAnalyzer = diagnosticsInAnalyzer;
+	result.tokenizedTokens = tokenizedTokens;
+	result.parsedAst = parsedAst;
+	result.analyzedScope.fullScope = analyzedScope.fullScope;
+	result.analyzedScope.path = analyzedScope.path;
+	delete result.analyzedScope.pureBuffer;
+	result.includedScopes = includedScopes;
 }
 
 function getIncludePathFromToken(token: TokenizedToken): string {
@@ -255,7 +273,9 @@ function resolveUri(dir: string, relativeUri: string): string {
 }
 
 function listPathsOfInspectedFilesUnder(dirUri: string): string[] {
-    return Object.keys(s_inspectedResults).filter(uri => uri.startsWith(dirUri));
+    let keys = Object.keys(s_inspectedResults);
+	keys = keys.filter(uri => uri.startsWith(dirUri));
+	return keys;
 }
 
 function collectIncludedScope(
@@ -280,10 +300,7 @@ function collectIncludedScope(
                 continue;
             }
 
-            // Store an empty result temporarily to avoid loops caused by circular references
-            s_inspectedResults[uri] = createEmptyResult();
-
-            s_inspectedResults[uri] = inspectInternal(content, uri, predefinedUri);
+            inspectInternal(content, uri, predefinedUri);
         }
 
         const result = s_inspectedResults[uri];
