@@ -28,6 +28,7 @@ import {
     NodeExprTerm1,
     NodeExprTerm2,
     NodeExprValue,
+    NodeExprVoid,
     NodeFor,
     NodeForEach,
     NodeForEachVar,
@@ -981,7 +982,7 @@ function expectStatBlock(parser: ParserState): NodeStatBlock | undefined {
     return statBlock;
 }
 
-// PARAMLIST     ::= '(' ['void' | (TYPE TYPEMOD [IDENTIFIER] ['=' EXPR] {',' TYPE TYPEMOD [IDENTIFIER] ['=' EXPR]})] ')'
+// PARAMLIST     ::= '(' ['void' | (TYPE TYPEMOD [IDENTIFIER] ['=' [EXPR | 'void']] {',' TYPE TYPEMOD [IDENTIFIER] ['=' [EXPR | 'void']]})] ')'
 function parseParamList(parser: ParserState): NodeParamList | undefined {
     if (parser.next().text !== '(') return undefined;
     parser.commit(HighlightForToken.Operator);
@@ -1010,10 +1011,10 @@ function parseParamList(parser: ParserState): NodeParamList | undefined {
             parser.commit(HighlightForToken.Variable);
         }
 
-        let defaultExpr: NodeExpr | undefined = undefined;
+        let defaultExpr: NodeExpr | NodeExprVoid | undefined = undefined;
         if (parser.next().text === '=') {
             parser.commit(HighlightForToken.Operator);
-            defaultExpr = expectExpr(parser);
+            defaultExpr = expectExprOrVoid(parser);
         }
 
         paramList.push({type: type, modifier: typeMod, identifier: identifier, defaultExpr: defaultExpr});
@@ -1079,34 +1080,18 @@ function parseCloseOperator(parser: ParserState, closeOp: string): BreakOrThroug
     return BreakOrThrough.Through;
 }
 
-// TYPEMOD       ::= ['&' ['in' | 'out' | 'inout'] [+] ['if_handle_then_const']]
+// TYPEMOD       ::= ['&' ['in' | 'out' | 'inout']]
 function parseTypeMod(parser: ParserState): TypeModifier | undefined {
-    let mod: TypeModifier | undefined = undefined;
+    if (parser.next().text !== '&') return undefined;
+    parser.commit(HighlightForToken.Builtin);
 
-    if (parser.next().text === '&') {
+    const next = parser.next().text;
+    if (next === 'in' || next === 'out' || next === 'inout') {
         parser.commit(HighlightForToken.Builtin);
-
-        const next = parser.next().text;
-        if (next === 'in' || next === 'out' || next === 'inout') {
-            parser.commit(HighlightForToken.Builtin);
-            if (next === 'in') mod = TypeModifier.In;
-            else if (next === 'out') mod = TypeModifier.Out;
-            else mod = TypeModifier.InOut;
-        }
+        if (next === 'in') return TypeModifier.In;
+        if (next === 'out') return TypeModifier.Out;
     }
-
-    // TODO: this should only be allowed on non-nocount handles
-    if (parser.next().text === '+') {
-        parser.commit(HighlightForToken.Builtin);
-    }
-
-    // TODO: this should only be allowed on handles of
-    // template parameter types
-    if (parser.next().text === 'if_handle_then_const') {
-        parser.commit(HighlightForToken.Builtin);
-    }
-
-    return mod;
+    return TypeModifier.InOut;
 }
 
 // TYPE          ::= ['const'] SCOPE DATATYPE ['<' TYPE {',' TYPE} '>'] { ('[' ']') | ('@' ['const']) }
@@ -1150,12 +1135,6 @@ function parseTypeTail(parser: ParserState) {
             continue;
         } else if (parser.next().text === '@') {
             parser.commit(HighlightForToken.Builtin);
-
-            // auto-handle
-            if (parser.next().text === '+') {
-                parser.commit(HighlightForToken.Builtin);
-            }
-
             if (parser.next().text === 'const') {
                 parser.commit(HighlightForToken.Builtin);
                 refModifier = ReferenceModifier.AtConst;
@@ -1341,23 +1320,20 @@ function parsePrimeType(parser: ParserState) {
     return next;
 }
 
-// FUNCATTR      ::= {'override' | 'final' | 'explicit' | 'property' | 'delete' | 'nodiscard'}
+// FUNCATTR      ::= {'override' | 'final' | 'explicit' | 'property'}
 function parseFuncAttr(parser: ParserState): FunctionAttribute | undefined {
     let attribute: FunctionAttribute | undefined = undefined;
     while (parser.isEnd() === false) {
         const next = parser.next().text;
 
-        const isFuncAttrToken          = next === 'override' || next === 'final' || next === 'explicit' || next === 'property' ||
-                                         next === 'delete' || next === 'nodiscard';
+        const isFuncAttrToken = next === 'override' || next === 'final' || next === 'explicit' || next === 'property';
         if (isFuncAttrToken === false) break;
 
         attribute = attribute ?? {
             isOverride: false,
             isFinal: false,
             isExplicit: false,
-            isProperty: false,
-            isDeleted: false,
-            isNoDiscard: false
+            isProperty: false
         };
 
         setFunctionAttribute(attribute, next);
@@ -1366,15 +1342,11 @@ function parseFuncAttr(parser: ParserState): FunctionAttribute | undefined {
     return attribute;
 }
 
-function setFunctionAttribute(attribute: Mutable<FunctionAttribute>, token: 'override' | 'final' | 'explicit' | 'property' | 'delete' | 'nodiscard') {
+function setFunctionAttribute(attribute: Mutable<FunctionAttribute>, token: 'override' | 'final' | 'explicit' | 'property') {
     if (token === 'override') attribute.isOverride = true;
     else if (token === 'final') attribute.isFinal = true;
     else if (token === 'explicit') attribute.isExplicit = true;
     else if (token === 'property') attribute.isProperty = true;
-    // TODO: implement in analyzer
-    else if (token === 'delete') attribute.isDeleted = true;
-    // TODO: implement in analyzer
-    else if (token === 'nodiscard') attribute.isNoDiscard = true;
 }
 
 // STATEMENT     ::= (IF | FOR | FOREACH | WHILE | RETURN | STATBLOCK | BREAK | CONTINUE | DOWHILE | SWITCH | EXPRSTAT | TRY)
@@ -1811,6 +1783,24 @@ function parseExpr(parser: ParserState): NodeExpr | undefined {
 }
 
 function expectExpr(parser: ParserState): NodeExpr | undefined {
+    const expr = parseExpr(parser);
+    if (expr === undefined) {
+        parser.error("Expected expression.");
+    }
+    return expr;
+}
+
+// for optional parameters
+function expectExprOrVoid(parser: ParserState): NodeExpr | NodeExprVoid | undefined {
+    if (parser.next().text === 'void') {
+        const rangeStart = parser.next();
+        parser.commit(HighlightForToken.Keyword);
+        return {
+            nodeName: NodeName.ExprVoid,
+            nodeRange: new TokenRange(rangeStart, parser.prev())
+        };
+    }
+
     const expr = parseExpr(parser);
     if (expr === undefined) {
         parser.error("Expected expression.");

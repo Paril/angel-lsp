@@ -28,9 +28,7 @@ export interface FunctionAttribute {
     readonly isOverride: boolean,
     readonly isFinal: boolean,
     readonly isExplicit: boolean,
-    readonly isProperty: boolean,
-    readonly isDeleted: boolean,
-    readonly isNoDiscard: boolean
+    readonly isProperty: boolean
 }
 
 export enum NodeName {
@@ -73,6 +71,7 @@ export enum NodeName {
     Expr = 'Expr',
     ExprTerm = 'ExprTerm',
     ExprValue = 'ExprValue',
+    ExprVoid = 'ExprVoid',
     ConstructCall = 'ConstructCall',
     ExprPreOp = 'ExprPreOp',
     ExprPostOp = 'ExprPostOp',
@@ -279,7 +278,7 @@ export interface ParsedTypeIdentifier {
     readonly type: NodeType,
     readonly modifier: TypeModifier | undefined,
     readonly identifier: TokenObject | undefined
-    readonly defaultExpr: NodeExpr | undefined
+    readonly defaultExpr: NodeExpr | NodeExprVoid | undefined
 }
 
 // TYPEMOD       ::= ['&' ['in' | 'out' | 'inout']]
@@ -428,6 +427,11 @@ export interface NodeExpr extends NodesBase {
     readonly nodeName: NodeName.Expr
     readonly head: NodeExprTerm,
     readonly tail: ParsedOpExpr | undefined
+}
+
+// EXPRVOID      ::= 'void'
+export interface NodeExprVoid extends NodesBase {
+    readonly nodeName: NodeName.ExprVoid
 }
 
 export interface ParsedOpExpr {
